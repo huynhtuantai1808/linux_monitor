@@ -1,0 +1,4 @@
+# Không commit các file chứa thông tin bí mật
+**/.env
+*.pyc
+**/__pycache__/
