@@ -53,7 +53,7 @@ class Notifier:
             return
 
         url = f"https://api.telegram.org/bot{self.tg_bot_token}/sendMessage"
-        payload = {"chat_id": self.tg_chat_id, "text": message, "parse_mode": "HTML"}
+        payload = {"chat_id": self.tg_chat_id, "text": message, "parse_mode": "MarkdownV2"}
         try:
             resp = requests.post(url, json=payload, timeout=5)
             if resp.status_code == 200:
