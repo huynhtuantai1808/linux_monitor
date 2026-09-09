@@ -5,45 +5,33 @@ from notifier import Notifier
 notifier = Notifier()
 
 
-def _get_level_icon(level: str) -> str:
-    return {"CRITICAL": "🔴", "WARNING": "⚠️"}.get(level, "✅")
-
-
-def _get_metric_icon(name: str, level: str) -> str:
-    icons = {"cpu": "🖥️", "ram": "🧠", "disk": "💾", "load": "📈"}
-    badge = "🔴" if level == "CRITICAL" else "⚠️"
-    return f"{badge} {icons.get(name, '📌')}"
-
-
 def format_process_table(processes: list) -> str:
     if not processes:
-        return "_Không có thông tin tiến trình._"
-
+        return ""
     lines = [
-        "```",
-        f"{'PID':<8} {'Name':<16} {'CPU%':>6} {'RAM%':>6} {'User'}",
-        f"{'-'*8} {'-'*16} {'-'*6} {'-'*6} {'-'*10}",
+        f"{'PID':<8} {'Name':<18} {'CPU%':>6} {'RAM%':>6}  User",
+        f"{'─'*8} {'─'*18} {'─'*6} {'─'*6}  {'─'*10}",
     ]
     for p in processes:
         pid  = str(p.get("pid", "-"))
-        name = (p.get("name") or "-")[:16]
-        cpu  = f"{p.get('cpu_percent', 0):.1f}"
-        ram  = f"{p.get('memory_percent', 0):.1f}"
+        name = (p.get("name") or "-")[:18]
+        cpu  = f"{p.get('cpu_percent', 0):.1f}%"
+        ram  = f"{p.get('memory_percent', 0):.2f}%"
         user = (p.get("username") or "-")[:12]
-        lines.append(f"{pid:<8} {name:<16} {cpu:>6} {ram:>6} {user}")
-    lines.append("```")
+        lines.append(f"{pid:<8} {name:<18} {cpu:>6} {ram:>6}  {user}")
     return "\n".join(lines)
 
 
-def build_markdown_message(level: str, hostname: str, alerts: list, processes: list) -> str:
-    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    icon = _get_level_icon(level)
+def build_message(level: str, hostname: str, alerts: list, processes: list) -> str:
+    """Tạo tin nhắn định dạng HTML cho Telegram"""
+    now  = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    icon = "🔴" if level == "CRITICAL" else "⚠️"
 
     lines = [
-        f"{icon} *\\[{level}\\] {hostname}*",
-        f"🕐 `{now}`",
+        f"{icon} <b>[{level}] {hostname}</b>",
+        f"🕐 <code>{now}</code>",
         "",
-        "📊 *Thông số vượt ngưỡng:*",
+        "📊 <b>Thông số vượt ngưỡng:</b>",
     ]
 
     for alert in alerts:
@@ -51,22 +39,21 @@ def build_markdown_message(level: str, hostname: str, alerts: list, processes: l
 
     if processes:
         lines.append("")
-        lines.append("⚙️ *Top Processes chiếm tài nguyên:*")
-        lines.append(format_process_table(processes))
+        lines.append("⚙️ <b>Top Processes chiếm tài nguyên:</b>")
+        lines.append(f"<pre>{format_process_table(processes)}</pre>")
 
-    lines.append("")
     lines.append("─────────────────────────")
-    lines.append("🤖 _Linux Monitor System_")
+    lines.append("🤖 <i>Linux Monitor System</i>")
 
     return "\n".join(lines)
 
 
 def evaluate_metrics(metrics: dict):
-    hostname = metrics.get("hostname", "Unknown")
-    cpu      = metrics.get("cpu_percent", 0)
-    ram      = metrics.get("ram_percent", 0)
-    disk     = metrics.get("disk_percent", 0)
-    load     = metrics.get("load_avg_1", 0)
+    hostname  = metrics.get("hostname", "Unknown")
+    cpu       = metrics.get("cpu_percent", 0)
+    ram       = metrics.get("ram_percent", 0)
+    disk      = metrics.get("disk_percent", 0)
+    load      = metrics.get("load_avg_1", 0)
     processes = metrics.get("top_processes", [])
 
     alerts = []
@@ -75,26 +62,26 @@ def evaluate_metrics(metrics: dict):
     # ── Critical (> 95%) ──────────────────────────────────────
     if cpu > 95 or ram > 95 or disk > 95:
         level = "CRITICAL"
-        if cpu  > 95: alerts.append(f"🔴 CPU:  `{cpu}%`  _(Critical \\> 95%)_")
-        if ram  > 95: alerts.append(f"🔴 RAM:  `{ram}%`  _(Critical \\> 95%)_")
-        if disk > 95: alerts.append(f"🔴 Disk: `{disk}%` _(Critical \\> 95%)_")
+        if cpu  > 95: alerts.append(f"🔴 CPU:  <code>{cpu}%</code>  <i>(Critical &gt; 95%)</i>")
+        if ram  > 95: alerts.append(f"🔴 RAM:  <code>{ram}%</code>  <i>(Critical &gt; 95%)</i>")
+        if disk > 95: alerts.append(f"🔴 Disk: <code>{disk}%</code> <i>(Critical &gt; 95%)</i>")
 
     # ── Warning (> 80%) ───────────────────────────────────────
     elif cpu > 80 or ram > 80 or disk > 80:
         level = "WARNING"
-        if cpu  > 80: alerts.append(f"⚠️ CPU:  `{cpu}%`  _(Warning \\> 80%)_")
-        if ram  > 80: alerts.append(f"⚠️ RAM:  `{ram}%`  _(Warning \\> 80%)_")
-        if disk > 80: alerts.append(f"⚠️ Disk: `{disk}%` _(Warning \\> 80%)_")
+        if cpu  > 80: alerts.append(f"⚠️ CPU:  <code>{cpu}%</code>  <i>(Warning &gt; 80%)</i>")
+        if ram  > 80: alerts.append(f"⚠️ RAM:  <code>{ram}%</code>  <i>(Warning &gt; 80%)</i>")
+        if disk > 80: alerts.append(f"⚠️ Disk: <code>{disk}%</code> <i>(Warning &gt; 80%)</i>")
 
     # ── Load Average ──────────────────────────────────────────
     if load > 2:
         if level == "OK":
             level = "WARNING"
-        alerts.append(f"📈 Load Average: `{load:.2f}` _(High \\> 2\\.0)_")
+        alerts.append(f"📈 Load Avg: <code>{load:.2f}</code> <i>(High &gt; 2.0)</i>")
 
     if alerts:
-        message = build_markdown_message(level, hostname, alerts, processes)
-        print(f"Đang gửi cảnh báo {level} cho {hostname}...")
+        message = build_message(level, hostname, alerts, processes)
+        print(f"Đang gửi cảnh báo {level} cho {hostname}...", flush=True)
         notifier.send_alert(message)
     else:
-        print(f"[{hostname}] Metrics OK — CPU: {cpu}% | RAM: {ram}% | Disk: {disk}% | Load: {load:.2f}")
+        print(f"[{hostname}] OK — CPU:{cpu}% RAM:{ram}% Disk:{disk}% Load:{load:.2f}", flush=True)
