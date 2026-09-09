@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import smtplib
 import logging
@@ -12,10 +13,28 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 log = logging.getLogger(__name__)
 
+# ── Các kênh hợp lệ ───────────────────────────────────────────────────────────
+VALID_CHANNELS = {"telegram", "gmail", "office365", "viber"}
+
+
+def _parse_channels() -> list[str]:
+    """Đọc NOTIFY_CHANNELS từ .env, trả về danh sách kênh đã lọc hợp lệ."""
+    raw = os.environ.get("NOTIFY_CHANNELS", os.environ.get("NOTIFY_CHANNEL", "telegram"))
+    channels = [c.strip().lower() for c in raw.split(",") if c.strip()]
+    valid    = [c for c in channels if c in VALID_CHANNELS]
+    invalid  = [c for c in channels if c not in VALID_CHANNELS]
+    if invalid:
+        log.warning(f"Kênh không hợp lệ bị bỏ qua: {invalid}. Hợp lệ: {VALID_CHANNELS}")
+    if not valid:
+        log.warning("Không có kênh hợp lệ nào. Mặc định dùng: telegram")
+        return ["telegram"]
+    return valid
+
 
 class Notifier:
     def __init__(self):
-        self.channel = os.environ.get("NOTIFY_CHANNEL", "telegram").lower()
+        self.channels = _parse_channels()
+        log.info(f"Kênh cảnh báo đang hoạt động: {', '.join(self.channels)}")
 
         # --- Telegram ---
         self.tg_bot_token = os.environ.get("TG_BOT_TOKEN", "")
@@ -28,128 +47,104 @@ class Notifier:
 
         # --- Gmail ---
         self.gmail_user = os.environ.get("GMAIL_USER", "")
-        self.gmail_pass = os.environ.get("GMAIL_APP_PASS", "")  # App Password (16 ký tự)
+        self.gmail_pass = os.environ.get("GMAIL_APP_PASS", "")
         self.gmail_to   = os.environ.get("GMAIL_TO", "")
 
         # --- Office 365 ---
-        self.o365_user     = os.environ.get("O365_USER", "")
-        self.o365_pass     = os.environ.get("O365_PASS", "")
-        self.o365_mail_to  = os.environ.get("MAIL_TO", "")
+        self.o365_user      = os.environ.get("O365_USER", "")
+        self.o365_pass      = os.environ.get("O365_PASS", "")
+        self.o365_mail_to   = os.environ.get("MAIL_TO", "")
         self.o365_mail_from = os.environ.get("MAIL_FROM", self.o365_user)
 
-    def send_alert(self, message: str):
-        """Gửi cảnh báo qua kênh được cấu hình trong .env (NOTIFY_CHANNEL)"""
-        if self.channel == "telegram":
-            self._send_telegram(message)
-        elif self.channel == "gmail":
-            self._send_gmail(message)
-        elif self.channel in ("email", "office365"):
-            self._send_office365(message)
-        elif self.channel == "viber":
-            self._send_viber(message)
-        elif self.channel == "all":
-            # Gửi đồng thời tất cả kênh đã cấu hình
-            self._send_telegram(message)
-            self._send_gmail(message)
-            self._send_office365(message)
-            self._send_viber(message)
-        else:
-            log.warning(f"Kênh '{self.channel}' không xác định. In ra Console:")
-            print(message, flush=True)
+        # Map tên kênh → hàm gửi
+        self._dispatch = {
+            "telegram":  self._send_telegram,
+            "gmail":     self._send_gmail,
+            "office365": self._send_office365,
+            "viber":     self._send_viber,
+        }
 
-    # ------------------------------------------------------------------ #
-    # Telegram
-    # ------------------------------------------------------------------ #
+    # ── Public ────────────────────────────────────────────────────────────── #
+
+    def send_alert(self, message: str):
+        """Gửi cảnh báo qua TẤT CẢ kênh được cấu hình trong NOTIFY_CHANNELS."""
+        errors = []
+        for channel in self.channels:
+            handler = self._dispatch.get(channel)
+            if handler:
+                try:
+                    handler(message)
+                except Exception as e:
+                    err = f"[{channel}] {e}"
+                    log.error(err)
+                    errors.append(err)
+        if errors:
+            log.error(f"Một số kênh gửi thất bại: {errors}")
+
+    # ── Telegram ──────────────────────────────────────────────────────────── #
+
     def _send_telegram(self, message: str):
         if not self.tg_bot_token or not self.tg_chat_id:
-            log.warning("[Telegram] TG_BOT_TOKEN hoặc TG_CHAT_ID chưa cấu hình trong .env.")
+            log.warning("[Telegram] TG_BOT_TOKEN hoặc TG_CHAT_ID chưa cấu hình.")
             return
-
         url     = f"https://api.telegram.org/bot{self.tg_bot_token}/sendMessage"
         payload = {"chat_id": self.tg_chat_id, "text": message, "parse_mode": "HTML"}
-        try:
-            resp = requests.post(url, json=payload, timeout=5)
-            if resp.status_code == 200:
-                log.info("[Telegram] Gửi cảnh báo thành công.")
-            else:
-                log.error(f"[Telegram] Lỗi HTTP {resp.status_code}: {resp.text}")
-        except Exception as e:
-            log.error(f"[Telegram] Ngoại lệ: {e}")
+        resp    = requests.post(url, json=payload, timeout=5)
+        if resp.status_code == 200:
+            log.info("[Telegram] ✅ Gửi thành công.")
+        else:
+            log.error(f"[Telegram] ❌ Lỗi HTTP {resp.status_code}: {resp.text}")
 
-    # ------------------------------------------------------------------ #
-    # Gmail  (dùng App Password — không cần tắt 2FA)
-    # ------------------------------------------------------------------ #
+    # ── Gmail ─────────────────────────────────────────────────────────────── #
+
     def _send_gmail(self, message: str):
         if not self.gmail_user or not self.gmail_pass or not self.gmail_to:
-            log.warning("[Gmail] GMAIL_USER, GMAIL_APP_PASS hoặc GMAIL_TO chưa cấu hình trong .env.")
+            log.warning("[Gmail] GMAIL_USER, GMAIL_APP_PASS hoặc GMAIL_TO chưa cấu hình.")
             return
-
-        subject  = self._extract_subject(message)
-        html_body = self._wrap_html_email(message)
-
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"]    = f"Linux Monitor <{self.gmail_user}>"
-        msg["To"]      = self.gmail_to
-
-        msg.attach(MIMEText(message, "plain", "utf-8"))   # fallback plain text
-        msg.attach(MIMEText(html_body, "html", "utf-8"))  # HTML đẹp hơn
-
+        msg = self._build_email_msg(
+            subject=self._extract_subject(message),
+            from_addr=f"Linux Monitor <{self.gmail_user}>",
+            to_addr=self.gmail_to,
+            plain=self._strip_html(message),
+            html=self._wrap_html_email(message),
+        )
         try:
-            with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as server:
-                server.ehlo()
-                server.starttls()
-                server.login(self.gmail_user, self.gmail_pass)
-                server.sendmail(self.gmail_user, self.gmail_to.split(","), msg.as_string())
-            log.info(f"[Gmail] Gửi cảnh báo thành công đến {self.gmail_to}")
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as s:
+                s.ehlo(); s.starttls()
+                s.login(self.gmail_user, self.gmail_pass)
+                s.sendmail(self.gmail_user, self.gmail_to.split(","), msg.as_string())
+            log.info(f"[Gmail] ✅ Gửi thành công đến {self.gmail_to}")
         except smtplib.SMTPAuthenticationError:
-            log.error("[Gmail] Sai thông tin xác thực. Hãy kiểm tra GMAIL_USER và GMAIL_APP_PASS.")
-        except Exception as e:
-            log.error(f"[Gmail] Ngoại lệ: {e}")
+            log.error("[Gmail] ❌ Sai thông tin xác thực. Kiểm tra GMAIL_USER & GMAIL_APP_PASS.")
 
-    # ------------------------------------------------------------------ #
-    # Office 365
-    # ------------------------------------------------------------------ #
+    # ── Office 365 ────────────────────────────────────────────────────────── #
+
     def _send_office365(self, message: str):
         if not self.o365_user or not self.o365_pass or not self.o365_mail_to:
-            log.warning("[Office365] O365_USER, O365_PASS hoặc MAIL_TO chưa cấu hình trong .env.")
+            log.warning("[Office365] O365_USER, O365_PASS hoặc MAIL_TO chưa cấu hình.")
             return
-
-        subject   = self._extract_subject(message)
-        html_body = self._wrap_html_email(message)
-
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"]    = self.o365_mail_from
-        msg["To"]      = self.o365_mail_to
-
-        msg.attach(MIMEText(message, "plain", "utf-8"))
-        msg.attach(MIMEText(html_body, "html", "utf-8"))
-
+        msg = self._build_email_msg(
+            subject=self._extract_subject(message),
+            from_addr=self.o365_mail_from,
+            to_addr=self.o365_mail_to,
+            plain=self._strip_html(message),
+            html=self._wrap_html_email(message),
+        )
         try:
-            with smtplib.SMTP("smtp.office365.com", 587, timeout=15) as server:
-                server.ehlo()
-                server.starttls()
-                server.login(self.o365_user, self.o365_pass)
-                server.sendmail(self.o365_mail_from, self.o365_mail_to.split(","), msg.as_string())
-            log.info(f"[Office365] Gửi cảnh báo thành công đến {self.o365_mail_to}")
+            with smtplib.SMTP("smtp.office365.com", 587, timeout=15) as s:
+                s.ehlo(); s.starttls()
+                s.login(self.o365_user, self.o365_pass)
+                s.sendmail(self.o365_mail_from, self.o365_mail_to.split(","), msg.as_string())
+            log.info(f"[Office365] ✅ Gửi thành công đến {self.o365_mail_to}")
         except smtplib.SMTPAuthenticationError:
-            log.error("[Office365] Sai thông tin xác thực. Kiểm tra O365_USER và O365_PASS / App Password.")
-        except Exception as e:
-            log.error(f"[Office365] Ngoại lệ: {e}")
+            log.error("[Office365] ❌ Sai thông tin xác thực. Kiểm tra O365_USER & O365_PASS.")
 
-    # ------------------------------------------------------------------ #
-    # Viber
-    # ------------------------------------------------------------------ #
+    # ── Viber ─────────────────────────────────────────────────────────────── #
+
     def _send_viber(self, message: str):
         if not self.viber_auth_token or not self.viber_receiver_id:
-            log.warning("[Viber] VIBER_AUTH_TOKEN hoặc VIBER_RECEIVER_ID chưa cấu hình trong .env.")
+            log.warning("[Viber] VIBER_AUTH_TOKEN hoặc VIBER_RECEIVER_ID chưa cấu hình.")
             return
-
-        # Strip HTML tags cho Viber (chỉ nhận plain text)
-        import re
-        plain = re.sub(r"<[^>]+>", "", message)
-
         url     = "https://chatapi.viber.com/pa/send_message"
         headers = {"X-Viber-Auth-Token": self.viber_auth_token}
         payload = {
@@ -158,50 +153,59 @@ class Notifier:
             "sender":          {"name": self.viber_bot_name},
             "tracking_data":   "monitor_alert",
             "type":            "text",
-            "text":            plain,
+            "text":            self._strip_html(message),   # Viber chỉ nhận plain text
         }
-        try:
-            resp      = requests.post(url, json=payload, headers=headers, timeout=5)
-            resp_data = resp.json()
-            if resp_data.get("status") == 0:
-                log.info("[Viber] Gửi cảnh báo thành công.")
-            else:
-                log.error(f"[Viber] Lỗi: {resp_data.get('status_message')}")
-        except Exception as e:
-            log.error(f"[Viber] Ngoại lệ: {e}")
+        resp      = requests.post(url, json=payload, headers=headers, timeout=5)
+        resp_data = resp.json()
+        if resp_data.get("status") == 0:
+            log.info("[Viber] ✅ Gửi thành công.")
+        else:
+            log.error(f"[Viber] ❌ Lỗi: {resp_data.get('status_message')}")
 
-    # ------------------------------------------------------------------ #
-    # Helpers
-    # ------------------------------------------------------------------ #
+    # ── Helpers ───────────────────────────────────────────────────────────── #
+
+    @staticmethod
+    def _strip_html(text: str) -> str:
+        return re.sub(r"<[^>]+>", "", text)
+
     @staticmethod
     def _extract_subject(message: str) -> str:
-        """Lấy dòng đầu tiên làm subject email, strip HTML tags"""
-        import re
-        first_line = message.strip().splitlines()[0] if message.strip() else "Linux Monitor Alert"
-        return re.sub(r"<[^>]+>", "", first_line)[:100]
+        first = message.strip().splitlines()[0] if message.strip() else "Linux Monitor Alert"
+        return re.sub(r"<[^>]+>", "", first)[:100]
+
+    @staticmethod
+    def _build_email_msg(subject, from_addr, to_addr, plain, html) -> MIMEMultipart:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = from_addr
+        msg["To"]      = to_addr
+        msg.attach(MIMEText(plain, "plain", "utf-8"))
+        msg.attach(MIMEText(html,  "html",  "utf-8"))
+        return msg
 
     @staticmethod
     def _wrap_html_email(message: str) -> str:
-        """Bọc nội dung HTML trong template email đơn giản"""
+        body = message.replace("\n", "<br>")
         return f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <style>
-    body {{ font-family: monospace; background:#1e1e2e; color:#cdd6f4; padding:20px; }}
-    .card {{ background:#313244; border-radius:8px; padding:20px; max-width:600px; margin:auto; }}
-    pre {{ background:#181825; padding:12px; border-radius:6px; overflow-x:auto; font-size:13px; }}
-    code {{ background:#181825; padding:2px 6px; border-radius:4px; }}
-    b {{ color:#cba6f7; }}
-    i {{ color:#a6e3a1; }}
-    hr {{ border-color:#45475a; }}
-    .footer {{ color:#585b70; font-size:12px; margin-top:12px; }}
+    body {{ font-family: 'Courier New', monospace; background:#1e1e2e; color:#cdd6f4; padding:20px; margin:0; }}
+    .card {{ background:#313244; border-radius:10px; padding:24px; max-width:620px; margin:auto; box-shadow:0 4px 20px rgba(0,0,0,.4); }}
+    pre  {{ background:#181825; padding:14px; border-radius:6px; overflow-x:auto; font-size:13px; }}
+    code {{ background:#181825; padding:2px 6px; border-radius:4px; color:#f38ba8; }}
+    b    {{ color:#cba6f7; }}
+    i    {{ color:#a6e3a1; font-style:italic; }}
+    .footer {{ color:#585b70; font-size:11px; margin-top:16px; text-align:center; }}
+    hr   {{ border:none; border-top:1px solid #45475a; margin:16px 0; }}
   </style>
 </head>
 <body>
   <div class="card">
-    {message.replace(chr(10), '<br>')}
-    <p class="footer">Powered by Linux Monitor System</p>
+    {body}
+    <hr>
+    <p class="footer">🤖 Powered by Linux Monitor System</p>
   </div>
 </body>
 </html>"""
