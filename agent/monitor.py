@@ -1,15 +1,26 @@
 import os
+import sys
 import time
 import socket
+import logging
 import psutil
 import requests
 from dotenv import load_dotenv
 
-# Load cấu hình từ file .env cùng thư mục
+# Load configuration from .env file in the same directory
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
+# Flush stdout immediately (no buffering) — required for nohup log visibility
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+log = logging.getLogger(__name__)
+
 MASTER_URL = os.environ.get("MASTER_URL", "http://127.0.0.1:8000/metrics")
-INTERVAL = int(os.environ.get("INTERVAL", 60))
+INTERVAL   = int(os.environ.get("INTERVAL", 60))
 
 def get_top_processes(sort_by="cpu", limit=3):
     processes = []
@@ -31,16 +42,16 @@ def collect_metrics():
     
     # 1. CPU
     cpu_percent = psutil.cpu_percent(interval=1)
-    
+
     # 2. RAM
     ram_info = psutil.virtual_memory()
     ram_percent = ram_info.percent
-    
-    # 3. Disk (Root partition)
+
+    # 3. Disk (root partition)
     disk_info = psutil.disk_usage('/')
     disk_percent = disk_info.percent
-    
-    # 4. Load Average (Linux specific)
+
+    # 4. Load Average (Linux only)
     try:
         load1, load5, load15 = os.getloadavg()
     except Exception:
@@ -57,30 +68,30 @@ def collect_metrics():
         "top_processes": []
     }
 
-    # Nếu bất kỳ tài nguyên nào > 80% hoặc load > 2, thu thập top process
+    # Collect top processes if any resource exceeds 80% or load > 2
     if cpu_percent > 80 or load1 > 2:
         metrics["top_processes"] = get_top_processes(sort_by="cpu", limit=5)
     elif ram_percent > 80:
         metrics["top_processes"] = get_top_processes(sort_by="memory", limit=5)
     elif disk_percent > 80:
-        # Disk không hẳn do process hiện tại, nhưng vẫn log memory/cpu để tham khảo
+        # Disk usage is not always process-driven, but log top memory consumers for reference
         metrics["top_processes"] = get_top_processes(sort_by="memory", limit=3)
 
     return metrics
 
 def main():
-    print(f"Bắt đầu monitor agent. Gửi dữ liệu về {MASTER_URL} mỗi {INTERVAL} giây.")
+    log.info(f"Agent started. Sending metrics to {MASTER_URL} every {INTERVAL} seconds.")
     while True:
         try:
             metrics = collect_metrics()
             response = requests.post(MASTER_URL, json=metrics, timeout=10)
             if response.status_code == 200:
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Đã gửi metrics thành công.")
+                log.info("Metrics sent successfully.")
             else:
-                print(f"Lỗi khi gửi metrics: HTTP {response.status_code}")
+                log.warning(f"Failed to send metrics: HTTP {response.status_code} — {response.text}")
         except Exception as e:
-            print(f"Lỗi kết nối đến Master: {e}")
-        
+            log.error(f"Connection error to Master: {e}")
+
         time.sleep(INTERVAL)
 
 if __name__ == "__main__":
