@@ -1,7 +1,7 @@
 import datetime
 from notifier import Notifier
 
-# Kênh cảnh báo được đọc tự động từ file .env (NOTIFY_CHANNEL)
+# Notification channel is auto-loaded from .env (NOTIFY_CHANNELS)
 notifier = Notifier()
 
 
@@ -23,7 +23,7 @@ def format_process_table(processes: list) -> str:
 
 
 def build_message(level: str, hostname: str, alerts: list, processes: list) -> str:
-    """Tạo tin nhắn định dạng HTML cho Telegram"""
+    """Build an HTML-formatted alert message for Telegram."""
     now  = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     icon = "🔴" if level == "CRITICAL" else "⚠️"
 
@@ -31,7 +31,7 @@ def build_message(level: str, hostname: str, alerts: list, processes: list) -> s
         f"{icon} <b>[{level}] {hostname}</b>",
         f"🕐 <code>{now}</code>",
         "",
-        "📊 <b>Thông số vượt ngưỡng:</b>",
+        "📊 <b>Resource thresholds exceeded:</b>",
     ]
 
     for alert in alerts:
@@ -39,7 +39,7 @@ def build_message(level: str, hostname: str, alerts: list, processes: list) -> s
 
     if processes:
         lines.append("")
-        lines.append("⚙️ <b>Top Processes chiếm tài nguyên:</b>")
+        lines.append("⚙️ <b>Top resource-consuming processes:</b>")
         lines.append(f"<pre>{format_process_table(processes)}</pre>")
 
     lines.append("─────────────────────────")
@@ -81,7 +81,7 @@ def evaluate_metrics(metrics: dict):
 
     if alerts:
         message = build_message(level, hostname, alerts, processes)
-        print(f"Đang gửi cảnh báo {level} cho {hostname}...", flush=True)
+        print(f"Sending {level} alert for {hostname}...", flush=True)
         notifier.send_alert(message)
     else:
         print(f"[{hostname}] OK — CPU:{cpu}% RAM:{ram}% Disk:{disk}% Load:{load:.2f}", flush=True)

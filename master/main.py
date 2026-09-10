@@ -2,12 +2,12 @@
 """
 Linux Monitor - Master Server
 Entry point: python main.py
-Cấu hình tại file .env trong cùng thư mục
+Configure via the .env file in the same directory
 """
 import os
 from dotenv import load_dotenv
 
-# Load .env trước khi import các module khác
+# Load .env before importing other modules
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 import uvicorn
@@ -16,18 +16,18 @@ from alerter import evaluate_metrics
 
 app = FastAPI(
     title="Linux Monitor - Master Server",
-    description="API nhận metrics từ các Agent và gửi cảnh báo",
+    description="API for receiving metrics from Agents and sending alerts",
     version="1.0.0",
 )
 
 @app.get("/health")
 async def health_check():
-    """Endpoint kiểm tra Master đang hoạt động"""
+    """Endpoint to verify the Master server is running"""
     return {"status": "ok", "service": "Linux Monitor Master"}
 
 @app.post("/metrics")
 async def receive_metrics(request: Request):
-    """Endpoint nhận metrics từ Agent"""
+    """Endpoint for receiving metrics from Agents"""
     try:
         metrics = await request.json()
         evaluate_metrics(metrics)
@@ -42,10 +42,10 @@ if __name__ == "__main__":
     print("=" * 60)
     print("  Linux Monitor - Master Server")
     print("=" * 60)
-    print(f"  Địa chỉ lắng nghe : http://{host}:{port}")
+    print(f"  Listening address  : http://{host}:{port}")
     print(f"  Health check       : http://{host}:{port}/health")
-    print(f"  Nhận metrics       : POST http://{host}:{port}/metrics")
-    print(f"  Kênh cảnh báo      : {os.environ.get('NOTIFY_CHANNEL', 'telegram')}")
+    print(f"  Receive metrics    : POST http://{host}:{port}/metrics")
+    print(f"  Alert channels     : {os.environ.get('NOTIFY_CHANNELS', 'telegram')}")
     print("=" * 60)
 
     uvicorn.run(app, host=host, port=port)
