@@ -144,7 +144,7 @@ INTERVAL=60
 python main.py
 
 # Chạy nền
-nohup python -r main.py > /var/log/linux-monitor-agent.log 2>&1 &
+nohup python -u main.py > /var/log/linux-monitor-agent.log 2>&1 &
 ```
 
 ---
