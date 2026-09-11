@@ -73,6 +73,44 @@ linux_monitor/
 
 ---
 
+## 📊 Metrics Collected
+
+### Both Agents (Linux & Windows)
+
+| Metric | Description |
+|--------|-------------|
+| `hostname` | Server hostname |
+| `ip_address` | Primary outbound IP (5-stage fallback detection) |
+| `cpu_percent` | CPU usage % |
+| `cpu_count` | Number of logical CPU cores |
+| `ram_percent` | RAM usage % |
+| `ram_total_gb` / `ram_used_gb` | Absolute RAM values |
+| `swap_percent` / `swap_used_gb` | Swap (Linux) or Pagefile (Windows) |
+| `disk_percent` | Highest disk usage % |
+| `disk_io` | Disk read/write speed in MB/s |
+| `load_avg_1/5/15` | Load Average (Linux) / Rolling CPU avg (Windows) |
+| `top_processes` | Top processes with CPU%, RAM%, and **absolute RAM (MB/GB)** |
+
+### Windows Agent Only
+
+| Metric | Description |
+|--------|-------------|
+| `disks[]` | Per-drive detail: mount, used_gb, total_gb, free_gb, percent |
+
+### IP Address Detection — 5-Stage Fallback
+
+The agent automatically detects the correct primary NIC using a progressive fallback chain:
+
+```
+Stage 1 → UDP probe to 8.8.8.8        : internet-facing servers
+Stage 2 → UDP probe to Master IP       : local servers that can reach Master
+Stage 3 → UDP probe to gateway IPs     : isolated LAN (tries 10.0.0.1, 192.168.x.1...)
+Stage 4 → psutil interface scan        : skips loopback & APIPA (169.254.x.x)
+Stage 5 → socket.gethostbyname()       : final hostname DNS resolution
+```
+
+---
+
 ## 🚀 Installation Guide
 
 ### Requirements
@@ -120,7 +158,7 @@ sudo iptables -A INPUT -p tcp --dport 8000 -j ACCEPT
 ```bash
 python main.py
 
-# Run in background (note: use -u for real-time log flushing)
+# Run in background (use -u for real-time log flushing)
 nohup python -u main.py > /var/log/linux-monitor-master.log 2>&1 &
 tail -f /var/log/linux-monitor-master.log
 ```
@@ -168,11 +206,9 @@ tail -f /var/log/linux-monitor-agent.log
 **Step 2:** Install dependencies (run in Command Prompt or PowerShell):
 ```bat
 cd agent_windows
-python -m venv venv
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-venv\Scripts\activate
 pip install -r requirements.txt
 ```
+
 **Step 3:** Edit `.env`:
 ```bat
 notepad .env
@@ -182,8 +218,9 @@ notepad .env
 MASTER_URL=http://192.168.1.100:8000/metrics
 INTERVAL=60
 
-# Optional: monitor specific drives only (leave blank for all)
-# MONITOR_DRIVES=C:,D:
+# Optional: monitor specific drives only (leave blank for all drives)
+# Accepts: C:, D:, E: or C, D, E (colon is optional)
+# MONITOR_DRIVES=C:,E:
 ```
 
 **Step 4:** Start the Agent:
@@ -193,12 +230,12 @@ python main.py
 :: Run silently in background via PowerShell
 Start-Process python -ArgumentList "-u main.py" -WindowStyle Hidden -RedirectStandardOutput "C:\Logs\monitor-agent.log" -RedirectStandardError "C:\Logs\monitor-agent-err.log"
 ```
-**Step 5:** Stop the Agent:
+
+**Step 5:** Stop the Agent (PowerShell):
 ```bat
 Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" | Select-Object ProcessId, CommandLine
-Stop-Process -Id xxxxx -Force
+Stop-Process -Id <PID> -Force
 ```
-
 
 > **Key differences — Windows vs Linux Agent:**
 >
@@ -206,6 +243,7 @@ Stop-Process -Id xxxxx -Force
 > |---------|-------|---------|
 > | Load Average | `os.getloadavg()` | Rolling CPU% average (15 samples) |
 > | Disk | Root partition `/` | All drives `C:\`, `D:\`, ... |
+> | Swap metric | Swap usage | Pagefile usage |
 > | OS Label in alert | 🐧 Linux | 🪟 Windows |
 > | Extra payload | — | `disks[]` per-drive detail |
 
@@ -265,7 +303,7 @@ GMAIL_TO=admin@gmail.com,ops@company.com
 ---
 
 ### 💼 Office 365 Email
-> ⚠️ If MFA is enabled, create an **App Password** at:  
+> ⚠️ If MFA is enabled, create an **App Password** at:
 > https://mysignins.microsoft.com/security-info → Add method → App password
 
 ```env
@@ -293,40 +331,26 @@ VIBER_BOT_NAME=Linux Monitor
 
 **Linux agent alert:**
 ```
-⚠️ [WARNING] web-server-01  🐧 Linux
+🔴 [CRITICAL] web-server-01  🐧 Linux
 🕐 2026-09-11 08:59:00
+🌐 103.72.98.212
+
+🖥️ System Info:
+  CPU cores: 4
+  RAM: 30.8GB / 32.0GB
+  Swap: 6.1GB / 8.0GB (76.2%)
+  Disk I/O: R 124.5 MB/s / W 38.2 MB/s
 
 📊 Resource thresholds exceeded:
-  • ⚠️ RAM:  87.3%  (Warning > 80%)
-  • 📈 Load Avg: 3.20  (High > 2.0)
+  • 🔴 RAM:  96.3% of 32.0GB  (Critical > 95%)
+  • 📈 Load Avg: 5.60 / 4 cores  (High > 2.0)
+  • 💾 Swap: 76.2% (6.1GB / 8.0GB)  (High — risk of OOM / disk thrashing)
 
 ⚙️ Top resource-consuming processes:
-PID      Name               CPU%   RAM%  User
-──────── ────────────────── ────── ──────────
-1234     java               45.2%  62.10%  root
-5678     mysqld             12.0%  18.50%  mysql
-─────────────────────────
-🤖 Linux Monitor System
-```
-
-**Windows agent alert:**
-```
-🔴 [CRITICAL] WIN-SERVER-01  🪟 Windows
-🕐 2026-09-11 08:59:00
-
-📊 Resource thresholds exceeded:
-  • 🔴 CPU:  96.5%  (Critical > 95%)
-  • ⚠️ Disk: 85.3%  (Warning > 80%)
-
-💾 Disk Usage per Drive:
-Drive    Used    Total    Free      %
-C:\   120.5GB  200.0GB  79.5GB  60.2%
-D:\   450.0GB  500.0GB  50.0GB  90.1% ⚠️
-
-⚙️ Top resource-consuming processes:
-PID      Name               CPU%   RAM%  User
-──────── ────────────────── ────── ──────────
-4512     java               95.1%  22.50%  SYSTEM
+PID      Name               CPU%   RAM%      RAM  User
+──────── ────────────────── ────── ──────── ────────
+1234     java               45.2%  12.5%   4.0GB  root
+5678     mysqld             12.0%  18.5%   5.9GB  mysql
 ─────────────────────────
 🤖 Linux Monitor System
 ```
@@ -340,40 +364,58 @@ After starting the Master, test the API:
 # Health check
 curl http://localhost:8000/health
 
-# Simulate a Linux agent sending CRITICAL CPU metrics
+# Simulate a Linux agent sending CRITICAL RAM + high load
 curl -X POST http://localhost:8000/metrics \
   -H "Content-Type: application/json" \
   -d '{
     "hostname": "test-linux-server",
+    "ip_address": "10.0.0.5",
     "os": "linux",
-    "cpu_percent": 97,
-    "ram_percent": 88,
+    "cpu_percent": 45,
+    "cpu_count": 4,
+    "ram_percent": 97,
+    "ram_total_gb": 32.0,
+    "ram_used_gb": 31.0,
+    "swap_percent": 76.2,
+    "swap_total_gb": 8.0,
+    "swap_used_gb": 6.1,
     "disk_percent": 30,
-    "load_avg_1": 3.5,
-    "load_avg_5": 2.8,
-    "load_avg_15": 2.1,
+    "load_avg_1": 5.6,
+    "load_avg_5": 4.2,
+    "load_avg_15": 3.1,
+    "disk_io": {"read_mbps": 124.5, "write_mbps": 38.2},
     "top_processes": [
-      {"pid": 1234, "name": "stress", "username": "root", "cpu_percent": 96.0, "memory_percent": 5.0}
+      {"pid": 1234, "name": "java", "username": "root", "cpu_percent": 45.0, "memory_percent": 12.5, "ram_mb": 4096}
     ]
   }'
 
-# Simulate a Windows agent with multi-drive disk data
+# Simulate a Windows agent with per-drive disk data
 curl -X POST http://localhost:8000/metrics \
   -H "Content-Type: application/json" \
   -d '{
     "hostname": "WIN-SERVER-01",
+    "ip_address": "10.10.20.214",
     "os": "windows",
     "cpu_percent": 45,
-    "ram_percent": 60,
-    "disk_percent": 91,
-    "load_avg_1": 1.0,
-    "load_avg_5": 1.0,
-    "load_avg_15": 1.0,
+    "cpu_count": 14,
+    "ram_percent": 93,
+    "ram_total_gb": 15.6,
+    "ram_used_gb": 14.5,
+    "swap_percent": 15.1,
+    "swap_total_gb": 20.0,
+    "swap_used_gb": 3.0,
+    "disk_percent": 68,
+    "load_avg_1": 11.3,
+    "load_avg_5": 9.5,
+    "load_avg_15": 8.2,
+    "disk_io": {"read_mbps": 0.0, "write_mbps": 0.0},
     "disks": [
-      {"mount": "C:\\\\", "total_gb": 200, "used_gb": 120, "free_gb": 80, "percent": 60},
-      {"mount": "D:\\\\", "total_gb": 500, "used_gb": 455, "free_gb": 45, "percent": 91}
+      {"mount": "C:\\\\", "total_gb": 209.9, "used_gb": 144.3, "free_gb": 65.6, "percent": 68.8},
+      {"mount": "E:\\\\", "total_gb": 266.2, "used_gb": 122.5, "free_gb": 143.7, "percent": 46.0}
     ],
-    "top_processes": []
+    "top_processes": [
+      {"pid": 33580, "name": "vmmemWSL", "username": "NT VIRTUAL MACHINE", "cpu_percent": 0.0, "memory_percent": 6.8, "ram_mb": 1024}
+    ]
   }'
 ```
 
@@ -383,6 +425,13 @@ curl -X POST http://localhost:8000/metrics \
 
 | Version | Change |
 |---------|--------|
+| v1.5 | **5-stage IP fallback** — detects primary NIC on both internet and isolated local servers |
+| v1.5 | **Swap/Pagefile alert** — warns when swap > 70% while RAM is also high (OOM risk) |
+| v1.5 | **Disk I/O** — real-time read/write MB/s delta per check interval |
+| v1.5 | **RAM absolute values** — alert shows `96.3% of 32.0GB` instead of just `96.3%` |
+| v1.5 | **Load Avg with cores** — shows `5.60 / 4 cores` for accurate context |
+| v1.5 | **Process RAM in MB/GB** — absolute memory per process in the top process table |
+| v1.4 | **IP Address** in alert header — `🌐 103.72.98.212` for quick server identification |
 | v1.3 | Added **Windows Agent** (`agent_windows/`) with per-drive disk monitoring and CPU rolling average |
 | v1.2 | **Multi-channel** support via `NOTIFY_CHANNELS` (comma-separated: telegram, gmail, office365, viber) |
 | v1.2 | Added **Gmail** SMTP with App Password support |
