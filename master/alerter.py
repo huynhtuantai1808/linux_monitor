@@ -57,7 +57,8 @@ def build_message(
                 f"{d['mount']:<8} {d['used_gb']:>6.1f}GB {d['total_gb']:>6.1f}GB "
                 f"{d['free_gb']:>6.1f}GB {d['percent']:>5.1f}%{flag}"
             )
-        lines.append(f"<pre>{'chr(10)'.join(drive_rows)}</pre>")
+        nl = "\n"
+        lines.append(f"<pre>{nl.join(drive_rows)}</pre>")
 
     if processes:
         lines.append("")

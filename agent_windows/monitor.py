@@ -22,14 +22,15 @@ log = logging.getLogger(__name__)
 
 MASTER_URL     = os.environ.get("MASTER_URL", "http://127.0.0.1:8000/metrics")
 INTERVAL       = int(os.environ.get("INTERVAL", 60))
-MONITOR_DRIVES = [d.strip().upper() for d in os.environ.get("MONITOR_DRIVES", "").split(",") if d.strip()]
+# Normalize drive letters: strip whitespace, colon, make uppercase  ("C:" → "C", "c" → "C")
+MONITOR_DRIVES = [d.strip().upper().rstrip(":") for d in os.environ.get("MONITOR_DRIVES", "").split(",") if d.strip()]
 
 # Rolling buffer to compute CPU average over 1 / 5 / 15 samples (simulates load average)
 _cpu_history: collections.deque = collections.deque(maxlen=15)
 
 
 def get_drives() -> list[str]:
-    """Return list of drive mount points to monitor (e.g. ['C:\\\\', 'D:\\\\'])."""
+    """Return list of drive mount points to monitor (e.g. ['C:\\\\', 'E:\\\\'])."""
     partitions = psutil.disk_partitions(all=False)
     drives = []
     for p in partitions:
@@ -37,10 +38,16 @@ def get_drives() -> list[str]:
         if "cdrom" in p.opts.lower() or p.fstype == "":
             continue
         if MONITOR_DRIVES:
-            letter = p.device.replace("\\", "").replace("/", "").rstrip(":")
-            if letter.upper() not in MONITOR_DRIVES:
+            # Normalize device letter: "C:\\" → "C"
+            letter = p.device.replace("\\", "").replace("/", "").rstrip(":").upper()
+            if letter not in MONITOR_DRIVES:
+                log.debug(f"Skipping drive {p.device!r} (not in MONITOR_DRIVES={MONITOR_DRIVES})")
                 continue
         drives.append(p.mountpoint)
+    if not drives:
+        log.warning(f"No drives matched MONITOR_DRIVES={MONITOR_DRIVES}. Check .env spelling.")
+    else:
+        log.debug(f"Monitoring drives: {drives}")
     return drives
 
 
