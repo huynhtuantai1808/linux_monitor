@@ -168,9 +168,11 @@ tail -f /var/log/linux-monitor-agent.log
 **Step 2:** Install dependencies (run in Command Prompt or PowerShell):
 ```bat
 cd agent_windows
+python -m venv venv
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+venv\Scripts\activate
 pip install -r requirements.txt
 ```
-
 **Step 3:** Edit `.env`:
 ```bat
 notepad .env
@@ -191,6 +193,12 @@ python main.py
 :: Run silently in background via PowerShell
 Start-Process python -ArgumentList "-u main.py" -WindowStyle Hidden -RedirectStandardOutput "C:\Logs\monitor-agent.log" -RedirectStandardError "C:\Logs\monitor-agent-err.log"
 ```
+**Step 5:** Stop the Agent:
+```bat
+Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" | Select-Object ProcessId, CommandLine
+Stop-Process -Id xxxxx -Force
+```
+
 
 > **Key differences — Windows vs Linux Agent:**
 >
