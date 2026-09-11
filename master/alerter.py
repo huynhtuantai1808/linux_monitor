@@ -52,7 +52,7 @@ def build_message(
     now      = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     icon     = "🔴" if level == "CRITICAL" else "⚠️"
     os_badge = "🪟 Windows" if os_name == "windows" else "🐧 Linux"
-    ip_str   = "  ".join(ip_addresses) if ip_addresses else ""
+    ip_str   = ip_addresses if isinstance(ip_addresses, str) else ("  ".join(ip_addresses) if ip_addresses else "")
 
     lines = [
         f"{icon} <b>[{level}] {hostname}</b>  <i>{os_badge}</i>",
@@ -117,7 +117,7 @@ def build_message(
 def evaluate_metrics(metrics: dict):
     hostname      = metrics.get("hostname", "Unknown")
     os_name       = metrics.get("os", "linux").lower()
-    ip_addresses  = metrics.get("ip_addresses", [])
+    ip_addresses  = metrics.get("ip_address", metrics.get("ip_addresses", ""))  # support both formats
     cpu           = metrics.get("cpu_percent", 0)
     cpu_count     = metrics.get("cpu_count", 0)
     ram           = metrics.get("ram_percent", 0)

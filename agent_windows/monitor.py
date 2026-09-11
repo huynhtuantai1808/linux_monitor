@@ -4,6 +4,7 @@ import time
 import socket
 import logging
 import collections
+import urllib.parse
 import psutil
 import requests
 from dotenv import load_dotenv
@@ -33,18 +34,70 @@ _prev_disk_io      = None
 _prev_disk_io_time = None
 
 
-def get_ip_addresses() -> list[str]:
-    """Return all non-loopback IPv4 addresses of this machine."""
-    ips = []
+def get_primary_ip() -> str:
+    """
+    Detect the primary outbound IP using a 5-stage fallback chain.
+    Supports both internet-facing and isolated/air-gapped servers.
+
+    Stage 1 -> UDP to 8.8.8.8        : servers with internet access
+    Stage 2 -> UDP to Master IP       : local servers that reach Master
+    Stage 3 -> UDP to common gateways : fully isolated LAN servers
+    Stage 4 -> psutil interface scan  : last-resort interface enumeration
+    Stage 5 -> hostname resolution    : final DNS fallback
+    """
+    def _udp_probe(target: str, port: int = 80) -> str | None:
+        """Create a UDP socket to target and return the local IP chosen by the OS."""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.settimeout(1)
+                s.connect((target, port))
+                return s.getsockname()[0]
+        except Exception:
+            return None
+
+    # Stage 1: Internet route
+    ip = _udp_probe("8.8.8.8")
+    if ip:
+        return ip
+
+    # Stage 2: Route toward Master Server
+    try:
+        parsed      = urllib.parse.urlparse(MASTER_URL)
+        master_host = parsed.hostname or ""
+        if master_host:
+            master_ip = socket.gethostbyname(master_host)
+            ip = _udp_probe(master_ip, parsed.port or 80)
+            if ip:
+                return ip
+    except Exception:
+        pass
+
+    # Stage 3: Common LAN gateway IPs
+    for gateway in ("10.0.0.1", "192.168.1.1", "192.168.0.1", "172.16.0.1"):
+        ip = _udp_probe(gateway)
+        if ip:
+            return ip
+
+    # Stage 4: psutil interface scan (skip loopback & APIPA)
     try:
         for addrs in psutil.net_if_addrs().values():
             for addr in addrs:
-                if addr.family == socket.AF_INET and not addr.address.startswith("127."):
-                    ips.append(addr.address)
+                if (
+                    addr.family == socket.AF_INET
+                    and not addr.address.startswith("127.")
+                    and not addr.address.startswith("169.254.")   # APIPA / link-local
+                ):
+                    return addr.address
     except Exception:
         pass
-    return ips if ips else ["unknown"]
 
+    # Stage 5: hostname DNS resolution
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except Exception:
+        pass
+
+    return "unknown"
 
 def get_drives() -> list[str]:
     """Return list of drive mount points to monitor (e.g. ['C:\\\\', 'E:\\\\'])."""
@@ -189,7 +242,7 @@ def collect_metrics() -> dict:
 
     metrics = {
         "hostname":      hostname,
-        "ip_addresses":  get_ip_addresses(),
+        "ip_address":    get_primary_ip(),
         "os":            "windows",
         "cpu_percent":   cpu_percent,
         "cpu_count":     cpu_count,
