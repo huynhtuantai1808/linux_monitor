@@ -1,185 +1,201 @@
-# 🖥️ Linux Monitor - Hệ thống Giám sát Server
+# 🖥️ Linux Monitor - Server Performance Monitoring System
 
-Công cụ giám sát hiệu năng máy chủ Linux theo mô hình **Master - Agent**, viết bằng Python.  
-Tự động cảnh báo qua **Telegram**, **Viber**, hoặc **Email Office 365** khi tài nguyên vượt ngưỡng.
+A **Master-Agent** architecture monitoring tool written in Python.  
+Automatically alerts via **Telegram**, **Gmail**, **Viber**, or **Office 365** when system resources exceed thresholds.  
+Supports both **Linux** 🐧 and **Windows** 🪟 agents reporting to a single Master.
 
 ---
 
-## 📐 Kiến trúc tổng quan
+## 📐 Architecture Overview
 
 ```
-                ┌─────────────────────────────────────┐
-                │        MASTER SERVER (Trung tâm)     │
-                │                                     │
-                │   FastAPI (port 8000)               │
-                │      ↓                              │
-                │   Alerter (đánh giá ngưỡng)         │
-                │      ↓                              │
-                │   Notifier ──────────────────────── │──▶ Telegram
-                │                                     │──▶ Viber
-                │                                     │──▶ Office 365 Email
-                └──────────────────┬──────────────────┘
-                                   │ HTTP POST /metrics
-               ┌───────────────────┼───────────────────┐
-               ▼                   ▼                   ▼
-    ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-    │  Agent - Server1│ │  Agent - Server2│ │  Agent - ServerN│
-    │  (psutil)       │ │  (psutil)       │ │  (psutil)       │
-    │  monitor.py     │ │  monitor.py     │ │  monitor.py     │
-    └─────────────────┘ └─────────────────┘ └─────────────────┘
+                ┌──────────────────────────────────────────────┐
+                │             MASTER SERVER (Central)           │
+                │                                              │
+                │   FastAPI (port 8000)                        │
+                │      ↓                                       │
+                │   Alerter  (evaluate WARNING / CRITICAL)     │
+                │      ↓                                       │
+                │   Notifier (multi-channel dispatch) ──────── │──▶ Telegram
+                │                                              │──▶ Gmail
+                │                                              │──▶ Viber
+                │                                              │──▶ Office 365
+                └────────────────┬─────────────────────────────┘
+                                 │ HTTP POST /metrics
+          ┌──────────────────────┼────────────────────────┐
+          ▼                      ▼                        ▼
+┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+│  🐧 Linux Agent  │  │  🐧 Linux Agent  │  │  🪟 Windows Agent│
+│  agent/          │  │  agent/          │  │  agent_windows/  │
+│  monitor.py      │  │  monitor.py      │  │  monitor.py      │
+└──────────────────┘  └──────────────────┘  └──────────────────┘
 ```
 
-### Logic cảnh báo
-| Ngưỡng | CPU / RAM / Disk | Load Average |
-|--------|-----------------|-------------|
+### Alert Thresholds
+
+| Level | CPU / RAM / Disk | Load Avg (Linux) / CPU Avg (Windows) |
+|-------|-----------------|--------------------------------------|
 | ✅ OK | < 80% | ≤ 2 |
 | ⚠️ WARNING | > 80% | > 2 |
-| 🔴 CRITICAL | > 95% | - |
+| 🔴 CRITICAL | > 95% | — |
 
-Khi kích hoạt cảnh báo, hệ thống tự động **gửi kèm danh sách top process** đang chiếm tài nguyên nhiều nhất.
+When an alert is triggered, the system automatically **attaches the top resource-consuming processes**.
 
 ---
 
-## 📁 Cấu trúc thư mục
+## 📁 Project Structure
 
 ```
 linux_monitor/
-├── .env.example            # Mẫu cấu hình - xem trước khi setup
-├── .gitignore
+├── .env.example            # Config template — read before setup
+├── .gitignore              # Prevents .env files from being committed
 │
-├── master/                 # Đặt trên server trung tâm
-│   ├── main.py             # ◀ Lệnh khởi động Master
-│   ├── server.py           # API FastAPI nhận metrics
-│   ├── alerter.py          # Logic đánh giá ngưỡng Warning/Critical
-│   ├── notifier.py         # Gửi cảnh báo (Telegram/Viber/Email)
-│   ├── .env                # ◀ Cấu hình kênh alert (KHÔNG commit lên git)
+├── master/                 # Deploy on the central server
+│   ├── main.py             # ◀ Entry point — start with: python main.py
+│   ├── server.py           # FastAPI server receiving metrics
+│   ├── alerter.py          # Threshold evaluation (Warning/Critical)
+│   ├── notifier.py         # Multi-channel alert dispatcher
+│   ├── .env                # ◀ Alert channel config (DO NOT commit)
 │   └── requirements.txt
 │
-└── agent/                  # Đặt trên mỗi server cần giám sát
-    ├── main.py             # ◀ Lệnh khởi động Agent
-    ├── monitor.py          # Thu thập metrics và gửi về Master
-    ├── .env                # ◀ Cấu hình MASTER_URL (KHÔNG commit lên git)
+├── agent/                  # Deploy on each Linux server to monitor
+│   ├── main.py             # ◀ Entry point — start with: python main.py
+│   ├── monitor.py          # Collects metrics and pushes to Master
+│   ├── .env                # ◀ Set MASTER_URL here (DO NOT commit)
+│   └── requirements.txt
+│
+└── agent_windows/          # Deploy on each Windows server to monitor
+    ├── main.py             # ◀ Entry point — start with: python main.py
+    ├── monitor.py          # Windows-specific metrics + all drives
+    ├── .env                # ◀ Set MASTER_URL here (DO NOT commit)
     └── requirements.txt
 ```
 
 ---
 
-## 🚀 Hướng dẫn cài đặt
+## 🚀 Installation Guide
 
-### Yêu cầu hệ thống
+### Requirements
 - Python 3.8+
-- Các server Agent phải có thể kết nối TCP đến IP và Port của Master
+- Agent servers must be able to reach the Master via TCP on the configured port
 
 ---
 
-### ⚙️ 1. Cài đặt Master Server
+### ⚙️ 1. Master Server Setup
 
-**Bước 1:** Copy thư mục `master/` lên server trung tâm, sau đó cài thư viện:
+**Step 1:** Copy `master/` to your central server, then install dependencies:
 ```bash
 cd linux_monitor/master/
 pip install -r requirements.txt
 ```
 
-**Bước 2:** Tạo file `.env` từ mẫu và điền thông tin:
+**Step 2:** Create `.env` from the template and fill in your config:
 ```bash
-cp ../env.example .env
-nano .env
+cp ../.env.example master/.env
+nano master/.env
 ```
 
-Nội dung file `.env` (xem chi tiết bên dưới phần **Cấu hình**):
+Minimal `.env` content (see **Configuration** section below for all options):
 ```env
-NOTIFY_CHANNEL=telegram
+# Comma-separated: telegram | gmail | office365 | viber
+NOTIFY_CHANNELS=telegram,gmail
+
 TG_BOT_TOKEN=your_bot_token_here
 TG_CHAT_ID=your_chat_id_here
+
 MASTER_HOST=0.0.0.0
 MASTER_PORT=8000
 ```
 
-**Bước 3:** Mở firewall để Agent kết nối vào:
+**Step 3:** Open firewall for Agents to connect:
 ```bash
 # UFW
 sudo ufw allow 8000/tcp
 
-# Hoặc iptables
+# Or iptables
 sudo iptables -A INPUT -p tcp --dport 8000 -j ACCEPT
 ```
 
-**Bước 4:** Khởi động Master:
+**Step 4:** Start the Master:
 ```bash
 python main.py
-```
 
-Chạy nền với `nohup`:
-```bash
-nohup python main.py > /var/log/linux-monitor-master.log 2>&1 &
+# Run in background (note: use -u for real-time log flushing)
+nohup python -u main.py > /var/log/linux-monitor-master.log 2>&1 &
+tail -f /var/log/linux-monitor-master.log
 ```
 
 ---
 
-### 🤖 2. Cài đặt Agent (trên mỗi server cần giám sát)
+> **Key differences — Windows vs Linux Agent:**
+>
+> | Feature | Linux | Windows |
+> |---------|-------|---------|
+> | Load Average | `os.getloadavg()` | Rolling CPU% average (15 samples) |
+> | Disk | Root partition `/` | All drives `C:\`, `D:\`, ... |
+> | OS Label in alert | 🐧 Linux | 🪟 Windows |
+> | Extra payload | — | `disks[]` per-drive detail |
 
-**Bước 1:** Copy thư mục `agent/` lên server cần giám sát:
-```bash
-scp -r linux_monitor/agent/ user@<IP_SERVER>:/opt/linux-monitor/
-```
+---
 
-**Bước 2:** Cài thư viện:
-```bash
-cd /opt/linux-monitor/agent/
-pip install -r requirements.txt
-```
+## 🔧 Configuration Details (`master/.env`)
 
-**Bước 3:** Tạo file `.env` và điền IP của Master:
-```bash
-nano .env
-```
+See the full template at [`.env.example`](.env.example).
+
+### NOTIFY_CHANNELS (multi-channel)
+
 ```env
-# Thay 192.168.1.100 bằng IP thực của Master Server
-MASTER_URL=http://192.168.1.100:8000/metrics
-INTERVAL=60
+# Send to ONE channel
+NOTIFY_CHANNELS=telegram
+
+# Send to MULTIPLE channels simultaneously
+NOTIFY_CHANNELS=telegram,gmail
+
+# Send to ALL channels
+NOTIFY_CHANNELS=telegram,gmail,office365,viber
 ```
 
-**Bước 4:** Khởi động Agent:
-```bash
-python main.py
-
-# Chạy nền
-nohup python main.py > /var/log/linux-monitor-agent.log 2>&1 &
-```
+| Value | Behaviour |
+|-------|-----------|
+| `telegram` | Sends to Telegram only |
+| `gmail` | Sends to Gmail only |
+| `telegram,gmail` | Sends to both at the same time |
+| `telegram,gmail,office365,viber` | Sends to all 4 channels |
 
 ---
 
-## 🔧 Cấu hình chi tiết (file `.env`)
-
-Xem file mẫu đầy đủ tại [`.env.example`](.env.example).
-
-### Telegram
-1. Mở Telegram, tìm **@BotFather** → tạo bot mới → lấy `TG_BOT_TOKEN`
-2. Gửi 1 tin nhắn cho bot, sau đó truy cập URL sau để lấy `TG_CHAT_ID`:
+### 📱 Telegram
+1. Find **@BotFather** on Telegram → create a new bot → copy the Bot Token
+2. Send a message to the bot, then open this URL to get the `chat_id`:
    ```
    https://api.telegram.org/bot<TG_BOT_TOKEN>/getUpdates
    ```
 ```env
-NOTIFY_CHANNEL=telegram
 TG_BOT_TOKEN=123456789:ABCdef...
 TG_CHAT_ID=-100123456789
 ```
 
-### Viber
-1. Tạo Viber Public Account tại: https://partners.viber.com
-2. Lấy `AUTH_TOKEN` từ dashboard
+---
+
+### 📧 Gmail
+> ⚠️ **Do NOT use your regular Gmail password.** You must create an **App Password** (16 characters).
+> 1. Enable 2-Step Verification on your Google account
+> 2. Go to: https://myaccount.google.com/apppasswords
+> 3. Select **Mail → Other (e.g. "Linux Monitor")** → Copy the 16-char password
+
 ```env
-NOTIFY_CHANNEL=viber
-VIBER_AUTH_TOKEN=your_auth_token
-VIBER_RECEIVER_ID=your_receiver_id
-VIBER_BOT_NAME=Linux Monitor
+GMAIL_USER=your_gmail@gmail.com
+GMAIL_APP_PASS=xxxx xxxx xxxx xxxx
+GMAIL_TO=admin@gmail.com,ops@company.com
 ```
 
-### Office 365 Email
-> ⚠️ Nếu tài khoản bật **MFA**, cần tạo **App Password** thay vì dùng mật khẩu thường.  
-> Vào: https://mysignins.microsoft.com/security-info → Thêm phương thức → App password
+---
+
+### 💼 Office 365 Email
+> ⚠️ If MFA is enabled, create an **App Password** at:  
+> https://mysignins.microsoft.com/security-info → Add method → App password
+
 ```env
-NOTIFY_CHANNEL=office365
 O365_USER=alert@company.com
 O365_PASS=your_app_password
 MAIL_FROM=alert@company.com
@@ -188,41 +204,115 @@ MAIL_TO=admin@company.com
 
 ---
 
-## 💡 Ví dụ tin nhắn cảnh báo
+### 📲 Viber
+1. Create a Viber Bot at: https://partners.viber.com
+2. Copy `AUTH_TOKEN` from the dashboard
 
-```
-[WARNING] Cảnh báo từ Server: web-server-01
-RAM usage is HIGH: 87.3%
-Load Average is HIGH: 3.2
-
-Các process tốn tài nguyên nhất:
-- PID: 1234 | Tên: java    | User: root | CPU: 45.2% | RAM: 62.10%
-- PID: 5678 | Tên: mysqld  | User: mysql| CPU: 12.0% | RAM: 18.50%
-- PID: 9012 | Tên: nginx   | User: www  | CPU:  2.1% | RAM:  1.20%
+```env
+VIBER_AUTH_TOKEN=your_auth_token
+VIBER_RECEIVER_ID=your_receiver_id
+VIBER_BOT_NAME=Linux Monitor
 ```
 
 ---
 
-## 🔍 Kiểm tra hoạt động
+## 💡 Sample Alert Message (Telegram)
 
-Sau khi Master đang chạy, kiểm tra API:
+**Linux agent alert:**
+```
+⚠️ [WARNING] web-server-01  🐧 Linux
+🕐 2026-09-11 08:59:00
+
+📊 Resource thresholds exceeded:
+  • ⚠️ RAM:  87.3%  (Warning > 80%)
+  • 📈 Load Avg: 3.20  (High > 2.0)
+
+⚙️ Top resource-consuming processes:
+PID      Name               CPU%   RAM%  User
+──────── ────────────────── ────── ──────────
+1234     java               45.2%  62.10%  root
+5678     mysqld             12.0%  18.50%  mysql
+─────────────────────────
+🤖 Linux Monitor System
+```
+
+**Windows agent alert:**
+```
+🔴 [CRITICAL] WIN-SERVER-01  🪟 Windows
+🕐 2026-09-11 08:59:00
+
+📊 Resource thresholds exceeded:
+  • 🔴 CPU:  96.5%  (Critical > 95%)
+  • ⚠️ Disk: 85.3%  (Warning > 80%)
+
+💾 Disk Usage per Drive:
+Drive    Used    Total    Free      %
+C:\   120.5GB  200.0GB  79.5GB  60.2%
+D:\   450.0GB  500.0GB  50.0GB  90.1% ⚠️
+
+⚙️ Top resource-consuming processes:
+PID      Name               CPU%   RAM%  User
+──────── ────────────────── ────── ──────────
+4512     java               95.1%  22.50%  SYSTEM
+─────────────────────────
+🤖 Linux Monitor System
+```
+
+---
+
+## 🔍 Verify the System is Working
+
+After starting the Master, test the API:
 ```bash
 # Health check
 curl http://localhost:8000/health
 
-# Gửi thủ công metric test (giả lập CPU cao)
+# Simulate a Linux agent sending CRITICAL CPU metrics
 curl -X POST http://localhost:8000/metrics \
   -H "Content-Type: application/json" \
   -d '{
-    "hostname": "test-server",
+    "hostname": "test-linux-server",
+    "os": "linux",
     "cpu_percent": 97,
-    "ram_percent": 45,
+    "ram_percent": 88,
     "disk_percent": 30,
-    "load_avg_1": 1.5,
-    "load_avg_5": 1.2,
-    "load_avg_15": 1.0,
+    "load_avg_1": 3.5,
+    "load_avg_5": 2.8,
+    "load_avg_15": 2.1,
     "top_processes": [
       {"pid": 1234, "name": "stress", "username": "root", "cpu_percent": 96.0, "memory_percent": 5.0}
     ]
   }'
+
+# Simulate a Windows agent with multi-drive disk data
+curl -X POST http://localhost:8000/metrics \
+  -H "Content-Type: application/json" \
+  -d '{
+    "hostname": "WIN-SERVER-01",
+    "os": "windows",
+    "cpu_percent": 45,
+    "ram_percent": 60,
+    "disk_percent": 91,
+    "load_avg_1": 1.0,
+    "load_avg_5": 1.0,
+    "load_avg_15": 1.0,
+    "disks": [
+      {"mount": "C:\\\\", "total_gb": 200, "used_gb": 120, "free_gb": 80, "percent": 60},
+      {"mount": "D:\\\\", "total_gb": 500, "used_gb": 455, "free_gb": 45, "percent": 91}
+    ],
+    "top_processes": []
+  }'
 ```
+
+---
+
+## 📋 Changelog
+
+| Version | Change |
+|---------|--------|
+| v1.3 | Added **Windows Agent** (`agent_windows/`) with per-drive disk monitoring and CPU rolling average |
+| v1.2 | **Multi-channel** support via `NOTIFY_CHANNELS` (comma-separated: telegram, gmail, office365, viber) |
+| v1.2 | Added **Gmail** SMTP with App Password support |
+| v1.1 | Alert messages reformatted to **HTML** for rich Telegram rendering |
+| v1.1 | Switched to Python `logging` module with `-u` flag for **real-time nohup logging** |
+| v1.0 | Initial release — Linux Master-Agent with Telegram / Viber / Office 365 |
