@@ -27,6 +27,19 @@ _prev_disk_io      = None
 _prev_disk_io_time = None
 
 
+def get_ip_addresses() -> list[str]:
+    """Return all non-loopback IPv4 addresses of this machine."""
+    ips = []
+    try:
+        for addrs in psutil.net_if_addrs().values():
+            for addr in addrs:
+                if addr.family == socket.AF_INET and not addr.address.startswith("127."):
+                    ips.append(addr.address)
+    except Exception:
+        pass
+    return ips if ips else ["unknown"]
+
+
 def get_disk_io() -> dict:
     """Calculate disk I/O rate (MB/s) since last call."""
     global _prev_disk_io, _prev_disk_io_time
@@ -106,6 +119,7 @@ def collect_metrics() -> dict:
 
     metrics = {
         "hostname":      hostname,
+        "ip_addresses":  get_ip_addresses(),
         "os":            "linux",
         "cpu_percent":   cpu_percent,
         "cpu_count":     cpu_count,

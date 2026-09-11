@@ -39,6 +39,7 @@ def build_message(
     os_name: str = "linux",
     disks: list = None,
     # Extended metrics
+    ip_addresses: list = None,
     cpu_count: int = 0,
     ram_total_gb: float = 0,
     ram_used_gb: float = 0,
@@ -51,11 +52,14 @@ def build_message(
     now      = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     icon     = "🔴" if level == "CRITICAL" else "⚠️"
     os_badge = "🪟 Windows" if os_name == "windows" else "🐧 Linux"
+    ip_str   = "  ".join(ip_addresses) if ip_addresses else ""
 
     lines = [
         f"{icon} <b>[{level}] {hostname}</b>  <i>{os_badge}</i>",
         f"🕐 <code>{now}</code>",
     ]
+    if ip_str:
+        lines.append(f"🌐 <code>{ip_str}</code>")
 
     # ── System specs summary ────────────────────────────────────
     spec_parts = []
@@ -113,6 +117,7 @@ def build_message(
 def evaluate_metrics(metrics: dict):
     hostname      = metrics.get("hostname", "Unknown")
     os_name       = metrics.get("os", "linux").lower()
+    ip_addresses  = metrics.get("ip_addresses", [])
     cpu           = metrics.get("cpu_percent", 0)
     cpu_count     = metrics.get("cpu_count", 0)
     ram           = metrics.get("ram_percent", 0)
@@ -171,6 +176,7 @@ def evaluate_metrics(metrics: dict):
             level, hostname, alerts, processes,
             os_name       = os_name,
             disks         = disks,
+            ip_addresses  = ip_addresses,
             cpu_count     = cpu_count,
             ram_total_gb  = ram_total_gb,
             ram_used_gb   = ram_used_gb,
