@@ -329,31 +329,7 @@ VIBER_BOT_NAME=Linux Monitor
 
 ## 💡 Sample Alert Message (Telegram)
 
-**Linux agent alert:**
-```
-🔴 [CRITICAL] web-server-01  🐧 Linux
-🕐 2026-09-11 08:59:00
-🌐 103.72.98.212
 
-🖥️ System Info:
-  CPU cores: 4
-  RAM: 30.8GB / 32.0GB
-  Swap: 6.1GB / 8.0GB (76.2%)
-  Disk I/O: R 124.5 MB/s / W 38.2 MB/s
-
-📊 Resource thresholds exceeded:
-  • 🔴 RAM:  96.3% of 32.0GB  (Critical > 95%)
-  • 📈 Load Avg: 5.60 / 4 cores  (High > 2.0)
-  • 💾 Swap: 76.2% (6.1GB / 8.0GB)  (High — risk of OOM / disk thrashing)
-
-⚙️ Top resource-consuming processes:
-PID      Name               CPU%   RAM%      RAM  User
-──────── ────────────────── ────── ──────── ────────
-1234     java               45.2%  12.5%   4.0GB  root
-5678     mysqld             12.0%  18.5%   5.9GB  mysql
-─────────────────────────
-🤖 Linux Monitor System
-```
 
 ---
 
