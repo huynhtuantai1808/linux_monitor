@@ -28,6 +28,10 @@ MONITOR_DRIVES = [d.strip().upper().rstrip(":") for d in os.environ.get("MONITOR
 # Rolling buffer to compute CPU average over 1 / 5 / 15 samples (simulates load average)
 _cpu_history: collections.deque = collections.deque(maxlen=15)
 
+# Disk I/O delta tracking
+_prev_disk_io      = None
+_prev_disk_io_time = None
+
 
 def get_drives() -> list[str]:
     """Return list of drive mount points to monitor (e.g. ['C:\\\\', 'E:\\\\'])."""
@@ -57,18 +61,18 @@ def get_disk_summary(drives: list[str]) -> tuple[float, list[dict]]:
         max_percent  – highest disk usage % across all monitored drives
         drive_list   – per-drive detail list
     """
-    drive_list = []
+    drive_list  = []
     max_percent = 0.0
     for mount in drives:
         try:
             usage = psutil.disk_usage(mount)
             pct   = usage.percent
             drive_list.append({
-                "mount":        mount,
-                "total_gb":     round(usage.total / (1024 ** 3), 1),
-                "used_gb":      round(usage.used  / (1024 ** 3), 1),
-                "free_gb":      round(usage.free  / (1024 ** 3), 1),
-                "percent":      pct,
+                "mount":    mount,
+                "total_gb": round(usage.total / (1024 ** 3), 1),
+                "used_gb":  round(usage.used  / (1024 ** 3), 1),
+                "free_gb":  round(usage.free  / (1024 ** 3), 1),
+                "percent":  pct,
             })
             if pct > max_percent:
                 max_percent = pct
@@ -77,12 +81,42 @@ def get_disk_summary(drives: list[str]) -> tuple[float, list[dict]]:
     return max_percent, drive_list
 
 
+def get_disk_io() -> dict:
+    """Calculate disk I/O rate (MB/s) since last call."""
+    global _prev_disk_io, _prev_disk_io_time
+    try:
+        current = psutil.disk_io_counters()
+        now     = time.time()
+        if _prev_disk_io is None or current is None:
+            _prev_disk_io      = current
+            _prev_disk_io_time = now
+            return {"read_mbps": 0.0, "write_mbps": 0.0}
+        elapsed = now - _prev_disk_io_time
+        if elapsed <= 0:
+            return {"read_mbps": 0.0, "write_mbps": 0.0}
+        read_mbps  = (current.read_bytes  - _prev_disk_io.read_bytes)  / elapsed / (1024 ** 2)
+        write_mbps = (current.write_bytes - _prev_disk_io.write_bytes) / elapsed / (1024 ** 2)
+        _prev_disk_io      = current
+        _prev_disk_io_time = now
+        return {
+            "read_mbps":  round(max(0.0, read_mbps),  2),
+            "write_mbps": round(max(0.0, write_mbps), 2),
+        }
+    except Exception:
+        return {"read_mbps": 0.0, "write_mbps": 0.0}
+
+
 def get_top_processes(sort_by: str = "cpu", limit: int = 5) -> list[dict]:
-    """Return top N processes sorted by CPU or memory usage."""
+    """Return top N processes with CPU%, RAM%, and absolute RAM (MB)."""
     procs = []
-    for proc in psutil.process_iter(["pid", "name", "username", "cpu_percent", "memory_percent"]):
+    for proc in psutil.process_iter(
+        ["pid", "name", "username", "cpu_percent", "memory_percent", "memory_info"]
+    ):
         try:
-            procs.append(proc.info)
+            info = proc.info.copy()
+            rss  = (info.get("memory_info") and info["memory_info"].rss) or 0
+            info["ram_mb"] = round(rss / (1024 ** 2), 1)
+            procs.append(info)
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             pass
 
@@ -111,19 +145,31 @@ def get_cpu_rolling_avg() -> tuple[float, float, float]:
 
 
 def collect_metrics() -> dict:
-    hostname = socket.gethostname()
+    hostname  = socket.gethostname()
+    cpu_count = psutil.cpu_count(logical=True) or 1
 
     # CPU (measure over 1 second)
     cpu_percent = psutil.cpu_percent(interval=1)
     _cpu_history.append(cpu_percent)
 
     # RAM
-    ram_info    = psutil.virtual_memory()
-    ram_percent = ram_info.percent
+    ram_info     = psutil.virtual_memory()
+    ram_percent  = ram_info.percent
+    ram_total_gb = round(ram_info.total / (1024 ** 3), 1)
+    ram_used_gb  = round(ram_info.used  / (1024 ** 3), 1)
+
+    # Pagefile (Windows equivalent of Swap)
+    swap          = psutil.swap_memory()
+    swap_percent  = swap.percent
+    swap_total_gb = round(swap.total / (1024 ** 3), 1)
+    swap_used_gb  = round(swap.used  / (1024 ** 3), 1)
 
     # Disk — all monitored drives
     drives               = get_drives()
     disk_percent, disks  = get_disk_summary(drives)
+
+    # Disk I/O
+    disk_io = get_disk_io()
 
     # CPU rolling average (Windows substitute for load average)
     avg1, avg5, avg15 = get_cpu_rolling_avg()
@@ -132,12 +178,19 @@ def collect_metrics() -> dict:
         "hostname":      hostname,
         "os":            "windows",
         "cpu_percent":   cpu_percent,
+        "cpu_count":     cpu_count,
         "ram_percent":   ram_percent,
-        "disk_percent":  disk_percent,           # Max across all drives
-        "disks":         disks,                  # Per-drive detail
-        "load_avg_1":    avg1,                   # Rolling CPU avg (1 sample)
-        "load_avg_5":    avg5,                   # Rolling CPU avg (5 samples)
-        "load_avg_15":   avg15,                  # Rolling CPU avg (15 samples)
+        "ram_total_gb":  ram_total_gb,
+        "ram_used_gb":   ram_used_gb,
+        "swap_percent":  swap_percent,         # Pagefile usage
+        "swap_total_gb": swap_total_gb,
+        "swap_used_gb":  swap_used_gb,
+        "disk_percent":  disk_percent,          # Max across all drives
+        "disks":         disks,                 # Per-drive detail
+        "load_avg_1":    avg1,                  # Rolling CPU avg (1 sample)
+        "load_avg_5":    avg5,                  # Rolling CPU avg (5 samples)
+        "load_avg_15":   avg15,                 # Rolling CPU avg (15 samples)
+        "disk_io":       disk_io,
         "top_processes": [],
     }
 
@@ -156,6 +209,7 @@ def collect_metrics() -> dict:
 def main():
     log.info(f"Windows Agent started. Sending metrics to {MASTER_URL} every {INTERVAL} seconds.")
     log.info(f"Monitored drives: {MONITOR_DRIVES if MONITOR_DRIVES else 'All available drives'}")
+    log.info(f"CPU cores: {psutil.cpu_count(logical=True)}")
 
     while True:
         try:
@@ -163,10 +217,12 @@ def main():
             response = requests.post(MASTER_URL, json=metrics, timeout=10)
             if response.status_code == 200:
                 log.info(
-                    f"Metrics sent successfully — "
+                    f"Metrics sent — "
                     f"CPU:{metrics['cpu_percent']}% "
-                    f"RAM:{metrics['ram_percent']}% "
-                    f"Disk:{metrics['disk_percent']}%"
+                    f"RAM:{metrics['ram_percent']}% ({metrics['ram_used_gb']}GB/{metrics['ram_total_gb']}GB) "
+                    f"Disk:{metrics['disk_percent']}% "
+                    f"Pagefile:{metrics['swap_percent']}% "
+                    f"IO R:{metrics['disk_io']['read_mbps']}MB/s W:{metrics['disk_io']['write_mbps']}MB/s"
                 )
             else:
                 log.warning(f"Failed to send metrics: HTTP {response.status_code} — {response.text}")
